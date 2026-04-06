@@ -4,10 +4,12 @@ title = "VulnBank Gitleaks Config"
 useDefault = true
 
 [allowlist]
-description = "Documentation files that describe vulnerabilities"
+description = "Files with intentional/local-dev credentials"
 paths = [
     '''VULNERABILITIES\.md$''',
     '''README\.md$''',
     '''\.gitleaks\.toml$''',
     '''\.semgrep/.*\.yml$''',
+    '''docker-compose\.yml$''',
+    '''kubernetes/base/secrets\.yml$''',
 ]
