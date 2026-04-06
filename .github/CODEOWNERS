@@ -1,0 +1,14 @@
+# Security-sensitive paths require security team review
+# In a real org, @security-team would be a GitHub team
+
+# Pipeline changes need security review
+.github/workflows/     @gadaugherty
+.semgrep/              @gadaugherty
+
+# Infrastructure changes need security review
+terraform/             @gadaugherty
+kubernetes/            @gadaugherty
+kyverno/               @gadaugherty
+
+# Dockerfiles affect supply chain security
+**/Dockerfile          @gadaugherty

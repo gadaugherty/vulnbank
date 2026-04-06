@@ -1,0 +1,28 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Tag
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      The :latest tag is mutable and makes deployments non-reproducible.
+      A rollback to "latest" might deploy a completely different image.
+      Require explicit version tags or SHA digests.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Images must not use the :latest tag. Use a specific version or SHA digest."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"

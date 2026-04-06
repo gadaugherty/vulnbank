@@ -1,0 +1,354 @@
+name: Security Pipeline
+
+on:
+  pull_request:
+    branches: [main, main-secure]
+  push:
+    branches: [main, main-secure]
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  # ── Secret Detection (fastest, run first) ──────────────────
+  secrets:
+    name: "🔑 Secret Detection"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # WHY gitleaks over trufflehog:
+        # - Lower false positive rate out of the box
+        # - Combined regex + entropy detection
+        # - TruffleHog is better for historical scanning of existing repos
+        # - Gitleaks is better for CI/CD integration (pre-commit + pipeline)
+
+  # ── SAST: Python (Semgrep) ─────────────────────────────────
+  sast-python:
+    name: "🐍 SAST — Python"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/owasp-top-ten
+            p/jwt
+            p/flask
+            .semgrep/custom-rules.yml
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        # WHY semgrep over bandit/CodeQL:
+        # - Bandit: Python-only, limited custom rules
+        # - CodeQL: Better for compiled languages (Java/C#), slower startup
+        # - Semgrep: Fast, multi-language, custom rules in a pattern syntax
+        #   that developers can actually contribute to
+        # TRADEOFF: Semgrep OSS has fewer rules than Semgrep Pro,
+        # but custom rules close the gap for our use cases
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+        continue-on-error: true
+
+  # ── SAST: Go (gosec) ──────────────────────────────────────
+  sast-go:
+    name: "🔵 SAST — Go"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: gosec
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt sarif -out gosec-results.sarif ./payments/...'
+        # WHY gosec:
+        # - Go-native, understands Go idioms
+        # - Catches SQL injection, hardcoded creds, weak crypto
+        # - SARIF output integrates with GitHub Security tab
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec-results.sarif
+
+  # ── SCA (Dependency Scanning) ──────────────────────────────
+  sca:
+    name: "📦 SCA — Dependencies"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy Filesystem Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-sca.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+        # DECISION: Only block on CRITICAL/HIGH.
+        # MEDIUM findings go to GitHub Security tab but don't block PRs.
+        # WHY: Blocking on MEDIUM creates alert fatigue. Devs start ignoring
+        # the pipeline. Better to have a weekly triage for MEDIUM findings.
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-sca.sarif
+
+      # SBOM generation — actually useful for incident response,
+      # not just a compliance checkbox
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          output-file: sbom.spdx.json
+        # WHY SPDX over CycloneDX:
+        # - SPDX is an ISO standard (ISO/IEC 5962:2021)
+        # - Better tooling support in the NIST ecosystem
+        # - CycloneDX is OWASP-backed and better for vuln correlation
+        # - Either works; we chose SPDX for compliance alignment
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+  # ── Container Scanning ─────────────────────────────────────
+  container-scan:
+    name: "🐳 Container Scan — ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    needs: [secrets]  # Don't build images if secrets are leaked
+    strategy:
+      matrix:
+        service: [auth-api, payments, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t vulnbank/${{ matrix.service }}:${{ github.sha }} ./${{ matrix.service }}
+
+      - name: Trivy Container Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'vulnbank/${{ matrix.service }}:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-container-${{ matrix.service }}.sarif'
+          exit-code: '1'
+          severity: 'CRITICAL'
+        # DECISION: Only block on CRITICAL for containers.
+        # HIGH in base image OS packages is often noise you can't fix
+        # (waiting on upstream maintainer). CRITICAL usually means
+        # actively exploited or trivially exploitable.
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-container-${{ matrix.service }}.sarif
+          category: container-${{ matrix.service }}
+
+  # ── IaC Scanning ───────────────────────────────────────────
+  iac:
+    name: "🏗️ IaC Scan — Terraform"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+          download_external_modules: true
+          soft_fail: false
+        # WHY checkov over tfsec:
+        # - tfsec is now part of Trivy (aquasecurity acquired it)
+        # - Checkov has better custom policy support via Python
+        # - Checkov covers Terraform, CloudFormation, Kubernetes, Dockerfile
+        # - Either works. Pick one, not both — overlap creates confusion.
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+
+  # ── Kubernetes Manifest Scanning ───────────────────────────
+  k8s-scan:
+    name: "☸️ K8s Manifest Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy K8s Config Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'kubernetes/'
+          format: 'sarif'
+          output: 'trivy-k8s.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'  # Warning only for now
+        # DECISION: K8s manifest scanning is warning-only initially.
+        # Many findings require changes to the deployment architecture,
+        # not just config tweaks. Enforcing immediately would block
+        # all deployments.
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-k8s.sarif
+          category: kubernetes
+
+  # ── Dockerfile Linting ─────────────────────────────────────
+  dockerfile-lint:
+    name: "📋 Dockerfile Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hadolint — auth-api
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: auth-api/Dockerfile
+          failure-threshold: warning
+        continue-on-error: true
+
+      - name: Hadolint — payments
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: payments/Dockerfile
+          failure-threshold: warning
+        continue-on-error: true
+
+      - name: Hadolint — frontend
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/Dockerfile
+          failure-threshold: warning
+        continue-on-error: true
+
+  # ── Security Gate (Final Decision) ─────────────────────────
+  security-gate:
+    name: "🚦 Security Gate"
+    runs-on: ubuntu-latest
+    needs: [secrets, sast-python, sast-go, sca, container-scan, iac, k8s-scan, dockerfile-lint]
+    if: always()
+    steps:
+      - name: Evaluate security results
+        run: |
+          echo "═══════════════════════════════════════════"
+          echo "  VulnBank Security Gate Results"
+          echo "═══════════════════════════════════════════"
+          echo ""
+
+          FAILED=0
+
+          # Secret detection — HARD BLOCK (always)
+          if [ "${{ needs.secrets.result }}" = "failure" ]; then
+            echo "❌ SECRET DETECTION: FAILED — hard block"
+            echo "::error::Secrets detected in codebase. This is a hard block."
+            FAILED=1
+          else
+            echo "✅ Secret Detection: passed"
+          fi
+
+          # SCA — HARD BLOCK on CRITICAL/HIGH
+          if [ "${{ needs.sca.result }}" = "failure" ]; then
+            echo "❌ SCA: FAILED — Critical/High vulnerability in dependencies"
+            echo "::error::Critical or High severity dependency vulnerability found."
+            FAILED=1
+          else
+            echo "✅ SCA: passed"
+          fi
+
+          # Container scanning — HARD BLOCK on CRITICAL
+          if [ "${{ needs.container-scan.result }}" = "failure" ]; then
+            echo "❌ CONTAINER SCAN: FAILED — Critical vulnerability in image"
+            echo "::error::Critical container vulnerability found."
+            FAILED=1
+          else
+            echo "✅ Container Scan: passed"
+          fi
+
+          # SAST Python — WARNING ONLY (first 30 days)
+          # DECISION: Don't block PRs on SAST initially.
+          # Rationale: If you block 200 findings on day one, developers
+          # will find workarounds (disable pipeline, force merge).
+          # Better: triage existing findings, create tickets, then enforce.
+          if [ "${{ needs.sast-python.result }}" = "failure" ]; then
+            echo "⚠️  SAST Python: findings detected (warning only)"
+          else
+            echo "✅ SAST Python: passed"
+          fi
+
+          # SAST Go — WARNING ONLY
+          if [ "${{ needs.sast-go.result }}" = "failure" ]; then
+            echo "⚠️  SAST Go: findings detected (warning only)"
+          else
+            echo "✅ SAST Go: passed"
+          fi
+
+          # IaC — WARNING ONLY (first 30 days)
+          if [ "${{ needs.iac.result }}" = "failure" ]; then
+            echo "⚠️  IaC Scan: findings detected (warning only)"
+          else
+            echo "✅ IaC Scan: passed"
+          fi
+
+          # K8s — WARNING ONLY
+          if [ "${{ needs.k8s-scan.result }}" = "failure" ]; then
+            echo "⚠️  K8s Scan: findings detected (warning only)"
+          else
+            echo "✅ K8s Scan: passed"
+          fi
+
+          # Dockerfile lint — WARNING ONLY
+          if [ "${{ needs.dockerfile-lint.result }}" = "failure" ]; then
+            echo "⚠️  Dockerfile Lint: findings detected (warning only)"
+          else
+            echo "✅ Dockerfile Lint: passed"
+          fi
+
+          echo ""
+          echo "═══════════════════════════════════════════"
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "🚫 SECURITY GATE: BLOCKED"
+            echo ""
+            echo "Pipeline enforcement policy:"
+            echo "  - Secrets: Always block"
+            echo "  - SCA (CRITICAL/HIGH): Always block"
+            echo "  - Container (CRITICAL): Always block"
+            echo "  - SAST/IaC/K8s: Warning only (30-day ramp)"
+            exit 1
+          fi
+
+          echo "✅ SECURITY GATE: PASSED"

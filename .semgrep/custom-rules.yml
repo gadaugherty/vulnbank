@@ -1,0 +1,133 @@
+rules:
+  # ── Python: Hardcoded JWT Secret ───────────────────────────
+  - id: vulnbank-no-hardcoded-jwt-secret
+    patterns:
+      - pattern: jwt.encode($PAYLOAD, "...", ...)
+    message: >
+      JWT secret is hardcoded. Use environment variable or a secrets manager
+      (AWS Secrets Manager, HashiCorp Vault). Hardcoded secrets end up in
+      version control and can be extracted from container images.
+      See: CWE-798 (Use of Hard-coded Credentials)
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-798: Use of Hard-coded Credentials"
+      confidence: HIGH
+      impact: HIGH
+
+  # ── Python: SQL Injection via f-string ─────────────────────
+  - id: vulnbank-no-fstring-sql
+    patterns:
+      - pattern: |
+          $DB.execute(f"...")
+      - pattern: |
+          $CURSOR.execute(f"...")
+    message: >
+      SQL query constructed with f-string. Use parameterized queries
+      (e.g., cursor.execute("SELECT ... WHERE id=%s", (value,))).
+      F-string SQL is trivially injectable.
+      See: CWE-89 (SQL Injection)
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-89: SQL Injection"
+      confidence: HIGH
+      impact: HIGH
+
+  # ── Python: Debug Mode in Production ───────────────────────
+  - id: vulnbank-no-flask-debug
+    patterns:
+      - pattern: app.run(..., debug=True, ...)
+    message: >
+      Flask debug mode is enabled. This exposes the Werkzeug debugger,
+      which allows arbitrary code execution. Never enable debug mode
+      in production.
+      See: CWE-489 (Active Debug Code)
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-489: Active Debug Code"
+      confidence: HIGH
+      impact: HIGH
+
+  # ── Python: Hardcoded Database Password ────────────────────
+  - id: vulnbank-no-hardcoded-db-password
+    patterns:
+      - pattern: |
+          $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (DB_PASS|DB_PASSWORD|db_pass|db_password|PASSWORD)
+    message: >
+      Database password appears to be hardcoded. Use environment variables
+      or a secrets manager.
+      See: CWE-798 (Use of Hard-coded Credentials)
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-798: Use of Hard-coded Credentials"
+      confidence: MEDIUM
+      impact: HIGH
+
+  # ── Python: Logging Sensitive Data ─────────────────────────
+  - id: vulnbank-no-logging-passwords
+    patterns:
+      - pattern: logging.$METHOD(... + $EXPR + ...)
+      - metavariable-regex:
+          metavariable: $EXPR
+          regex: .*(password|secret|token|key).*
+    message: >
+      Sensitive data (password, secret, token) may be logged.
+      Mask or redact sensitive fields before logging.
+      See: CWE-532 (Insertion of Sensitive Information into Log File)
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-532: Information Exposure Through Log Files"
+      confidence: MEDIUM
+      impact: MEDIUM
+
+  # ── Dockerfile: Running as Root ────────────────────────────
+  - id: vulnbank-no-root-dockerfile
+    patterns:
+      - pattern: USER root
+    message: >
+      Container is configured to run as root. Use a non-root user
+      (e.g., USER 65534:65534 or USER nonroot). Root containers can
+      escalate to host-level access via container escapes.
+    severity: WARNING
+    languages: [dockerfile]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-250: Execution with Unnecessary Privileges"
+      confidence: HIGH
+      impact: MEDIUM
+
+  # ── Dockerfile: chmod 777 ──────────────────────────────────
+  - id: vulnbank-no-chmod-777
+    patterns:
+      - pattern: RUN chmod 777 ...
+      - pattern: RUN chmod -R 777 ...
+    message: >
+      Setting world-writable permissions (777) in a container.
+      This allows any process to modify application files.
+      Use restrictive permissions (e.g., 755 for dirs, 644 for files).
+    severity: WARNING
+    languages: [dockerfile]
+    metadata:
+      category: security
+      cwe:
+        - "CWE-732: Incorrect Permission Assignment"
+      confidence: HIGH
+      impact: MEDIUM

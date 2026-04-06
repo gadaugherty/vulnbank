@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments
+  namespace: vulnbank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments
+  template:
+    metadata:
+      labels:
+        app: payments
+    spec:
+      # VULNERABILITY: No security context
+      # VULNERABILITY: No resource limits
+      containers:
+        - name: payments
+          image: vulnbank/payments:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: "postgres"
+            - name: DB_PASSWORD
+              value: "admin123"
+          # VULNERABILITY: Privileged container
+          securityContext:
+            privileged: true
+            runAsUser: 0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments
+  namespace: vulnbank
+spec:
+  type: LoadBalancer
+  selector:
+    app: payments
+  ports:
+    - port: 8080
+      targetPort: 8080

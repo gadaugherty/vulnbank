@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+*.pyc
+__pycache__/
+.env
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+*.sarif
+sbom.spdx.json
