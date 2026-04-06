@@ -1,0 +1,2 @@
+# Trivy ignore file for VulnBank
+# Format: CVE-YYYY-NNNNN  # justification + mitigation + re-eval date
