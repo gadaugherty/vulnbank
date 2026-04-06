@@ -1,2 +1,14 @@
 # Trivy ignore file for VulnBank
-# Format: CVE-YYYY-NNNNN  # justification + mitigation + re-eval date
+# Every entry: justification + mitigation + re-evaluation date
+
+# PyJWT CVE-2026-32597: accepts unknown crit header extensions
+# Fixed version (2.12.0) not yet released. We control both token creation
+# and validation, so unknown crit headers are not a real attack vector.
+# Mitigation: JWT validation uses explicit algorithm list (HS256 only).
+CVE-2026-32597  # PyJWT: no fix available (2.12.0 unreleased). Re-eval 2026-10.
+
+# Frontend build-time dependencies (react-scripts transitive deps)
+# Present only during Docker build stage. Production container is nginx
+# serving static files — no node_modules in the final image.
+GHSA-5c6j-r48x-rmvq  # serialize-javascript: build-time only. Re-eval 2026-10.
+CVE-2026-27601       # underscore: build-time only, DoS via recursive data. Re-eval 2026-10.

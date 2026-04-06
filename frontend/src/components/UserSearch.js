@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 function UserSearch() {
   const [searchId, setSearchId] = useState('');
@@ -10,13 +10,20 @@ function UserSearch() {
 
   const handleSearch = async (e) => {
     e.preventDefault();
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Please login first');
+      return;
+    }
     try {
-      const res = await axios.get(`${API_URL}/user/${searchId}`);
+      const res = await axios.get(`${API_URL}/user/${encodeURIComponent(searchId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       setUserData(res.data);
       setError('');
     } catch (err) {
       setUserData(null);
-      setError(err.response?.data?.error || err.message);
+      setError(err.response?.data?.error || 'User not found');
     }
   };
 
@@ -25,7 +32,7 @@ function UserSearch() {
       <h2>Search Users</h2>
       <form onSubmit={handleSearch}>
         <input
-          type="text"
+          type="number"
           placeholder="Enter User ID"
           value={searchId}
           onChange={(e) => setSearchId(e.target.value)}
@@ -39,8 +46,8 @@ function UserSearch() {
           <p><strong>ID:</strong> {userData.id}</p>
           <p><strong>Username:</strong> {userData.username}</p>
           <p><strong>Email:</strong> {userData.email}</p>
-          {/* VULNERABILITY: Reflected XSS — rendering raw data from API (CWE-79) */}
-          <p><strong>Balance:</strong> <span dangerouslySetInnerHTML={{ __html: userData.balance }} /></p>
+          {/* FIX: No dangerouslySetInnerHTML — use text content */}
+          <p><strong>Balance:</strong> ${userData.balance}</p>
         </div>
       )}
     </div>

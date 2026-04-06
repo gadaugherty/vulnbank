@@ -1,24 +1,17 @@
-# VULNERABILITY: Not pinned to digest (CWE-1104)
-FROM node:18
-
+# FIX: Multi-stage build — build with Node, serve with nginx
+FROM node:18-alpine AS builder
 WORKDIR /app
-
-# VULNERABILITY: Copies everything, no .dockerignore
+COPY package.json package-lock.json* ./
+RUN npm ci --ignore-scripts
 COPY . .
-
-# VULNERABILITY: No lockfile integrity check
-RUN npm install
 RUN npm run build
 
-# VULNERABILITY: Using full node image to serve static files
-# VULNERABILITY: Running as root (CWE-250)
-RUN npm install -g serve
+# FIX: Use nginx-unprivileged for serving static files
+# WHY: Full node image is ~900MB. Nginx alpine is ~40MB.
+# Less surface area, less to scan, less to patch.
+FROM nginxinc/nginx-unprivileged:1.25-alpine
+COPY --from=builder /app/build /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# VULNERABILITY: Overly permissive (CWE-732)
-RUN chmod -R 777 /app
-
-USER root
-
-EXPOSE 3000
-
-CMD ["serve", "-s", "build", "-l", "3000"]
+# FIX: Already runs as non-root (UID 101)
+EXPOSE 8080

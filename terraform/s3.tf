@@ -1,9 +1,5 @@
-# ─── S3 Bucket — DELIBERATELY MISCONFIGURED ─────────────────
+# ─── S3 Bucket — SECURED ─────────────────────────────────────
 
-# VULNERABILITY: No encryption (CKV_AWS_19)
-# VULNERABILITY: No versioning (CKV_AWS_21)
-# VULNERABILITY: No public access block (CKV_AWS_53, CKV_AWS_54, CKV_AWS_55, CKV_AWS_56)
-# VULNERABILITY: No access logging (CKV_AWS_18)
 resource "aws_s3_bucket" "user_data" {
   bucket = "vulnbank-user-data"
 
@@ -13,8 +9,51 @@ resource "aws_s3_bucket" "user_data" {
   }
 }
 
-# VULNERABILITY: Public read ACL (CWE-732)
-resource "aws_s3_bucket_acl" "user_data" {
+# FIX: Block all public access
+resource "aws_s3_bucket_public_access_block" "user_data" {
   bucket = aws_s3_bucket.user_data.id
-  acl    = "public-read"
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# FIX: Enable KMS encryption
+resource "aws_s3_bucket_server_side_encryption_configuration" "user_data" {
+  bucket = aws_s3_bucket.user_data.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+# FIX: Enable versioning (protects against accidental deletion)
+resource "aws_s3_bucket_versioning" "user_data" {
+  bucket = aws_s3_bucket.user_data.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# FIX: Enable access logging
+resource "aws_s3_bucket_logging" "user_data" {
+  bucket        = aws_s3_bucket.user_data.id
+  target_bucket = aws_s3_bucket.logs.id
+  target_prefix = "s3-access-logs/"
+}
+
+resource "aws_s3_bucket" "logs" {
+  bucket = "vulnbank-access-logs"
+}
+
+resource "aws_s3_bucket_public_access_block" "logs" {
+  bucket = aws_s3_bucket.logs.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }

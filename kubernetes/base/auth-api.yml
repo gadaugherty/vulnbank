@@ -4,7 +4,7 @@ metadata:
   name: auth-api
   namespace: vulnbank
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: auth-api
@@ -13,24 +13,67 @@ spec:
       labels:
         app: auth-api
     spec:
-      # VULNERABILITY: No securityContext (CWE-250)
-      # VULNERABILITY: No resource limits (CWE-770)
-      # VULNERABILITY: No readOnlyRootFilesystem
-      # VULNERABILITY: Running as root
+      # FIX: Security context at pod level
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
       containers:
         - name: auth-api
-          image: vulnbank/auth-api:latest
-          # VULNERABILITY: Using :latest tag (unreproducible)
+          # FIX: Pinned image tag (use SHA in production)
+          image: vulnbank/auth-api:1.0.0
           ports:
             - containerPort: 5000
           env:
-            # VULNERABILITY: Secrets in plain env vars (CWE-798)
             - name: DB_HOST
               value: "postgres"
-            - name: DB_PASSWORD
-              value: "admin123"
+            - name: DB_NAME
+              value: "vulnbank"
+            # FIX: Secrets from Kubernetes Secret, not plain env vars
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vulnbank-db-credentials
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: vulnbank-db-credentials
+                  key: password
             - name: JWT_SECRET
-              value: "supersecret123"
+              valueFrom:
+                secretKeyRef:
+                  name: vulnbank-jwt
+                  key: secret
+          # FIX: Container security context
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          # FIX: Resource limits
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          # FIX: Health checks
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -38,8 +81,8 @@ metadata:
   name: auth-api
   namespace: vulnbank
 spec:
-  # VULNERABILITY: Using LoadBalancer exposes directly to internet
-  type: LoadBalancer
+  # FIX: ClusterIP instead of LoadBalancer — expose via Ingress
+  type: ClusterIP
   selector:
     app: auth-api
   ports:

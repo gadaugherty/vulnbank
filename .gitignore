@@ -10,3 +10,5 @@ __pycache__/
 .terraform.lock.hcl
 *.sarif
 sbom.spdx.json
+frontend/build/
+frontend/node_modules/

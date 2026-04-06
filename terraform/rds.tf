@@ -1,4 +1,4 @@
-# ─── RDS — DELIBERATELY MISCONFIGURED ────────────────────────
+# ─── RDS — SECURED ───────────────────────────────────────────
 
 resource "aws_db_instance" "vulnbank" {
   identifier     = "vulnbank-db"
@@ -7,33 +7,84 @@ resource "aws_db_instance" "vulnbank" {
   instance_class = "db.t3.micro"
 
   db_name  = "vulnbank"
-  username = "admin"
-  password = var.db_password  # Uses default "admin123"
+  username = "vulnbank_app"
+  password = var.db_password  # Set via TF_VAR_db_password, never default
 
-  # VULNERABILITY: Publicly accessible (CKV_AWS_17)
-  publicly_accessible = true
+  # FIX: Not publicly accessible
+  publicly_accessible = false
+  db_subnet_group_name = aws_db_subnet_group.vulnbank.name
 
-  # VULNERABILITY: No encryption at rest (CKV_AWS_16)
-  storage_encrypted = false
+  # FIX: Encryption at rest
+  storage_encrypted = true
+  kms_key_id       = aws_kms_key.rds.arn
 
-  # VULNERABILITY: No deletion protection (CKV_AWS_226)
-  deletion_protection = false
+  # FIX: Deletion protection enabled
+  deletion_protection = true
 
-  # VULNERABILITY: No backup retention (poor DR)
-  backup_retention_period = 0
+  # FIX: Backup retention
+  backup_retention_period = 7
 
-  # VULNERABILITY: No Multi-AZ (poor HA)
-  multi_az = false
+  # FIX: Multi-AZ for HA
+  multi_az = true
 
-  # VULNERABILITY: No enhanced monitoring
-  # VULNERABILITY: No performance insights
+  # FIX: Auto minor version upgrade
+  auto_minor_version_upgrade = true
 
-  # VULNERABILITY: Minor version auto-upgrade disabled
-  auto_minor_version_upgrade = false
+  # FIX: Enhanced monitoring
+  monitoring_interval = 60
+  monitoring_role_arn = aws_iam_role.rds_monitoring.arn
 
-  skip_final_snapshot = true
+  # FIX: Performance insights
+  performance_insights_enabled = true
+
+  vpc_security_group_ids = [aws_security_group.rds.id]
 
   tags = {
     Environment = var.environment
   }
+}
+
+resource "aws_kms_key" "rds" {
+  description             = "RDS encryption key"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+}
+
+resource "aws_db_subnet_group" "vulnbank" {
+  name       = "vulnbank-db"
+  subnet_ids = aws_subnet.private[*].id
+}
+
+# FIX: Restrictive security group for RDS
+resource "aws_security_group" "rds" {
+  name        = "vulnbank-rds"
+  description = "Allow PostgreSQL from EKS nodes only"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.eks_nodes.id]
+  }
+}
+
+resource "aws_iam_role" "rds_monitoring" {
+  name = "vulnbank-rds-monitoring"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "monitoring.rds.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+  role       = aws_iam_role.rds_monitoring.name
 }

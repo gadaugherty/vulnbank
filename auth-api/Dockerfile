@@ -1,20 +1,25 @@
-# VULNERABILITY: Not pinned to digest, using full image (CWE-1104)
-FROM python:3.9
+FROM python:3.13-slim
 
-# VULNERABILITY: No .dockerignore, copies everything
+# Install OS security patches
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
 WORKDIR /app
-COPY . .
 
-# VULNERABILITY: No pip hash verification, no lockfile
-RUN pip install -r requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# VULNERABILITY: Overly permissive file permissions (CWE-732)
-RUN chmod 777 /app
+COPY --chown=appuser:appuser app.py .
 
-# VULNERABILITY: Running as root (CWE-250)
-USER root
+RUN chmod 755 /app && chmod 644 /app/app.py
+
+USER appuser
 
 EXPOSE 5000
 
-# VULNERABILITY: Debug mode enabled
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120", "app:app"]
