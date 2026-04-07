@@ -12,3 +12,5 @@ __pycache__/
 sbom.spdx.json
 frontend/build/
 frontend/node_modules/
+.venv/
+gitleaks

@@ -16,8 +16,8 @@ import (
 var db *sql.DB
 
 type TransferRequest struct {
-	FromUserID  int     `json:"from_user_id"`
-	ToUserID    int     `json:"to_user_id"`
+	FromAccount string  `json:"from_account"`
+	ToAccount   string  `json:"to_account"`
 	Amount      float64 `json:"amount"`
 	Description string  `json:"description"`
 }
@@ -96,7 +96,7 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(TransferResponse{Error: "Amount must be positive"})
 		return
 	}
-	if req.FromUserID == req.ToUserID {
+	if req.FromAccount == req.ToAccount {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(TransferResponse{Error: "Cannot transfer to yourself"})
@@ -121,7 +121,7 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 
 	// FIX: Check balance before transfer (prevents overdraft)
 	var balance float64
-	err = tx.QueryRow("SELECT balance FROM users WHERE id = $1 FOR UPDATE", req.FromUserID).Scan(&balance)
+	err = tx.QueryRow("SELECT balance FROM users WHERE account_number = $1 FOR UPDATE", req.FromAccount).Scan(&balance)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -138,8 +138,8 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 	// FIX: Parameterized query — prevents SQL injection
 	var txID int
 	err = tx.QueryRow(
-		"INSERT INTO transactions (from_user_id, to_user_id, amount, description) VALUES ($1, $2, $3, $4) RETURNING id",
-		req.FromUserID, req.ToUserID, req.Amount, req.Description,
+		"INSERT INTO transactions (from_account, to_account, amount, description) VALUES ($1, $2, $3, $4) RETURNING id",
+		req.FromAccount, req.ToAccount, req.Amount, req.Description,
 	).Scan(&txID)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -150,14 +150,14 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// FIX: Parameterized balance updates within transaction
-	_, err = tx.Exec("UPDATE users SET balance = balance - $1 WHERE id = $2", req.Amount, req.FromUserID)
+	_, err = tx.Exec("UPDATE users SET balance = balance - $1 WHERE account_number = $2", req.Amount, req.FromAccount)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(TransferResponse{Error: "Transfer failed"})
 		return
 	}
-	_, err = tx.Exec("UPDATE users SET balance = balance + $1 WHERE id = $2", req.Amount, req.ToUserID)
+	_, err = tx.Exec("UPDATE users SET balance = balance + $1 WHERE account_number = $2", req.Amount, req.ToAccount)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -173,7 +173,7 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// FIX: Log transaction ID only, no sensitive data
-	log.Printf("Transfer completed: tx_id=%d from=%d to=%d", txID, req.FromUserID, req.ToUserID)
+	log.Printf("Transfer completed: tx_id=%d from=%s to=%s", txID, req.FromAccount, req.ToAccount)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(TransferResponse{
@@ -185,7 +185,7 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 func transactionsHandler(w http.ResponseWriter, r *http.Request) {
 	// FIX: Parameterized query, limited fields
 	rows, err := db.Query(
-		"SELECT id, from_user_id, to_user_id, amount FROM transactions ORDER BY created_at DESC LIMIT 50",
+		"SELECT id, from_account, to_account, amount, status FROM transactions ORDER BY created_at DESC LIMIT 50",
 	)
 	if err != nil {
 		http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
@@ -201,7 +201,7 @@ func transactionsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		transactions = append(transactions, map[string]interface{}{
-			"id": id, "from_user_id": fromID, "to_user_id": toID, "amount": amount,
+			"id": id, "from_account": fromAcct, "to_account": toAcct, "amount": amount, "status": status,
 		})
 	}
 

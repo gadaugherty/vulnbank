@@ -10,6 +10,7 @@ import psycopg2
 from psycopg2 import sql as psql
 import hashlib
 import hmac
+import random
 
 app = Flask(__name__)
 CORS(app, origins=[os.environ.get("ALLOWED_ORIGIN", "http://localhost:3000")])
@@ -60,6 +61,12 @@ def verify_password(password: str, stored_hash: str, salt: str) -> bool:
     return hmac.compare_digest(dk.hex(), stored_hash)
 
 
+
+
+def generate_account_number():
+    """Generate a unique account number."""
+    return f"4821-{random.randint(1000,9999)}-{random.randint(1000,9999)}"
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
@@ -86,8 +93,8 @@ def register():
     try:
         # FIX: Parameterized query — prevents SQL injection
         cur.execute(
-            "INSERT INTO users (username, password_hash, password_salt, email) VALUES (%s, %s, %s, %s)",
-            (username, pw_hash, salt, email),
+            "INSERT INTO users (username, password_hash, password_salt, email, account_number) VALUES (%s, %s, %s, %s, %s)",
+            (username, pw_hash, salt, email, generate_account_number()),
         )
         conn.commit()
         logger.info("User registered: %s", username)
@@ -179,10 +186,10 @@ def get_users():
     conn = get_db()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT id, username, email FROM users")
+        cur.execute("SELECT id, username, email, account_number FROM users")
         users = cur.fetchall()
         return jsonify(
-            [{"id": u[0], "username": u[1], "email": u[2]} for u in users]
+            [{"id": u[0], "username": u[1], "email": u[2], "account_number": u[3]} for u in users]
         )
     finally:
         cur.close()
@@ -203,13 +210,13 @@ def get_user(user_id):
     try:
         # FIX: Parameterized query
         cur.execute(
-            "SELECT id, username, email, balance FROM users WHERE id = %s",
+            "SELECT id, username, email, balance, account_number FROM users WHERE id = %s",
             (user_id,),
         )
         user = cur.fetchone()
         if user:
             return jsonify(
-                {"id": user[0], "username": user[1], "email": user[2], "balance": str(user[3])}
+                {"id": user[0], "username": user[1], "email": user[2], "balance": str(user[3]), "account_number": user[4]}
             )
         return jsonify({"error": "User not found"}), 404
     finally:
