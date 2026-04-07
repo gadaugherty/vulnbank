@@ -4,7 +4,7 @@ metadata:
   name: payments
   namespace: vulnbank
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: payments
@@ -13,22 +13,57 @@ spec:
       labels:
         app: payments
     spec:
-      # VULNERABILITY: No security context
-      # VULNERABILITY: No resource limits
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65534
       containers:
         - name: payments
-          image: vulnbank/payments:latest
+          image: vulnbank/payments:1.0.0
           ports:
             - containerPort: 8080
           env:
             - name: DB_HOST
               value: "postgres"
-            - name: DB_PASSWORD
-              value: "admin123"
-          # VULNERABILITY: Privileged container
+            - name: DB_NAME
+              value: "vulnbank"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vulnbank-db-credentials
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: vulnbank-db-credentials
+                  key: password
+          # FIX: Hardened security context
           securityContext:
-            privileged: true
-            runAsUser: 0
+            runAsNonRoot: true
+            runAsUser: 65534
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -36,7 +71,7 @@ metadata:
   name: payments
   namespace: vulnbank
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: payments
   ports:

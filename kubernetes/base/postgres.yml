@@ -13,21 +13,56 @@ spec:
       labels:
         app: postgres
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999  # postgres user
+        fsGroup: 999
       containers:
         - name: postgres
-          image: postgres:15
+          image: postgres:15-alpine
           ports:
             - containerPort: 5432
           env:
-            # VULNERABILITY: Credentials in plain env vars (CWE-798)
+            # FIX: Credentials from Kubernetes Secret
             - name: POSTGRES_USER
-              value: "admin"
+              valueFrom:
+                secretKeyRef:
+                  name: vulnbank-db-credentials
+                  key: username
             - name: POSTGRES_PASSWORD
-              value: "admin123"
+              valueFrom:
+                secretKeyRef:
+                  name: vulnbank-db-credentials
+                  key: password
             - name: POSTGRES_DB
               value: "vulnbank"
-          # VULNERABILITY: No resource limits
-          # VULNERABILITY: No persistent volume — data loss on restart
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # FIX: Persistent volume
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: vulnbank
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
 ---
 apiVersion: v1
 kind: Service
@@ -35,6 +70,8 @@ metadata:
   name: postgres
   namespace: vulnbank
 spec:
+  # FIX: ClusterIP — not exposed outside cluster
+  type: ClusterIP
   selector:
     app: postgres
   ports:

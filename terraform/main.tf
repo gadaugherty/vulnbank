@@ -7,18 +7,27 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  # FIX: Remote state with encryption
+  backend "s3" {
+    bucket         = "vulnbank-terraform-state"
+    key            = "production/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "vulnbank-terraform-locks"
+  }
 }
 
 provider "aws" {
   region = "us-east-1"
 }
 
-# ─── Variables ───────────────────────────────────────────────
 variable "environment" {
   default = "production"
 }
 
+# FIX: No default password — must be provided via TF_VAR_db_password
 variable "db_password" {
-  # VULNERABILITY: Default password in variable (CWE-798)
-  default = "admin123"
+  type      = string
+  sensitive = true
 }
