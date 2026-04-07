@@ -14,7 +14,7 @@ import (
 
 // VULNERABILITY: Hardcoded credentials (CWE-798)
 var (
-	dbHost = "postgres"
+	dbHost = "localhost"
 	dbName = "vulnbank"
 	dbUser = "admin"
 	dbPass = "admin123"
@@ -23,8 +23,8 @@ var (
 var db *sql.DB
 
 type TransferRequest struct {
-	FromUserID  int     `json:"from_user_id"`
-	ToUserID    int     `json:"to_user_id"`
+	FromAccount string  `json:"from_account"`
+	ToAccount   string  `json:"to_account"`
 	Amount      float64 `json:"amount"`
 	Description string  `json:"description"`
 }
@@ -77,8 +77,8 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 
 	// VULNERABILITY: SQL Injection via string formatting (CWE-89)
 	query := fmt.Sprintf(
-		"INSERT INTO transactions (from_user_id, to_user_id, amount, description) VALUES (%d, %d, %f, '%s') RETURNING id",
-		req.FromUserID, req.ToUserID, req.Amount, req.Description,
+		"INSERT INTO transactions (from_account, to_account, amount, description) VALUES ('%s', '%s', %f, '%s') RETURNING id",
+		req.FromAccount, req.ToAccount, req.Amount, req.Description,
 	)
 
 	var txID int
@@ -93,8 +93,8 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 
 	// VULNERABILITY: No balance check — overdraft possible (business logic flaw)
 	updateQuery := fmt.Sprintf(
-		"UPDATE users SET balance = balance - %f WHERE id = %d; UPDATE users SET balance = balance + %f WHERE id = %d",
-		req.Amount, req.FromUserID, req.Amount, req.ToUserID,
+		"UPDATE users SET balance = balance - %f WHERE account_number = '%s'; UPDATE users SET balance = balance + %f WHERE account_number = '%s'",
+		req.Amount, req.FromAccount, req.Amount, req.ToAccount,
 	)
 	_, err = db.Exec(updateQuery)
 	if err != nil {
@@ -102,8 +102,8 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// VULNERABILITY: Logging sensitive transaction data (CWE-532)
-	log.Printf("Transfer: user %d -> user %d, amount: %f, desc: %s",
-		req.FromUserID, req.ToUserID, req.Amount, req.Description)
+	log.Printf("Transfer: %s -> %s, amount: %f, desc: %s",
+		req.FromAccount, req.ToAccount, req.Amount, req.Description)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(TransferResponse{
@@ -115,7 +115,7 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 func transactionsHandler(w http.ResponseWriter, r *http.Request) {
 	// VULNERABILITY: No authentication (CWE-306)
 	// VULNERABILITY: Returns all transactions for all users (CWE-200)
-	rows, err := db.Query("SELECT id, from_user_id, to_user_id, amount, description FROM transactions ORDER BY created_at DESC LIMIT 100")
+	rows, err := db.Query("SELECT id, from_account, to_account, amount, description, status FROM transactions ORDER BY created_at DESC LIMIT 100")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -124,13 +124,13 @@ func transactionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var transactions []map[string]interface{}
 	for rows.Next() {
-		var id, fromID, toID int
+		var id int
+		var fromAcct, toAcct, desc, status string
 		var amount float64
-		var desc string
-		rows.Scan(&id, &fromID, &toID, &amount, &desc)
+		rows.Scan(&id, &fromAcct, &toAcct, &amount, &desc, &status)
 		transactions = append(transactions, map[string]interface{}{
-			"id": id, "from_user_id": fromID, "to_user_id": toID,
-			"amount": amount, "description": desc,
+			"id": id, "from_account": fromAcct, "to_account": toAcct,
+			"amount": amount, "description": desc, "status": status,
 		})
 	}
 
@@ -138,12 +138,26 @@ func transactionsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(transactions)
 }
 
+
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next(w, r)
+	}
+}
+
 func main() {
 	initDB()
 
-	http.HandleFunc("/health", healthHandler)
-	http.HandleFunc("/transfer", transferHandler)
-	http.HandleFunc("/transactions", transactionsHandler)
+	http.HandleFunc("/health", corsMiddleware(healthHandler))
+	http.HandleFunc("/transfer", corsMiddleware(transferHandler))
+	http.HandleFunc("/transactions", corsMiddleware(transactionsHandler))
 
 	port := os.Getenv("PORT")
 	if port == "" {

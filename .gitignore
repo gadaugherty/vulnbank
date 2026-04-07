@@ -10,3 +10,7 @@ __pycache__/
 .terraform.lock.hcl
 *.sarif
 sbom.spdx.json
+.venv/
+frontend/node_modules/
+frontend/build/
+gitleaks

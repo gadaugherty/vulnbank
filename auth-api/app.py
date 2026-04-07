@@ -14,7 +14,7 @@ CORS(app)
 logging.basicConfig(level=logging.DEBUG)
 
 # VULNERABILITY: Hardcoded database credentials (CWE-798)
-DB_HOST = "postgres"
+DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_NAME = "vulnbank"
 DB_USER = "admin"
 DB_PASS = "admin123"  # Hardcoded credential
@@ -80,7 +80,7 @@ def login():
             # VULNERABILITY: No token expiration (CWE-613)
             # VULNERABILITY: Hardcoded JWT secret (CWE-798)
             token = jwt.encode(
-                {"user": username, "role": "user"},
+                {"user": username, "user_id": user[0], "role": "user"},
                 JWT_SECRET,
                 algorithm="HS256",
             )
@@ -101,11 +101,11 @@ def get_users():
     conn = get_db()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT id, username, password, email FROM users")
+        cur.execute("SELECT id, username, password, email, account_number, balance FROM users")
         users = cur.fetchall()
         return jsonify(
             [
-                {"id": u[0], "username": u[1], "password": u[2], "email": u[3]}
+                {"id": u[0], "username": u[1], "password": u[2], "email": u[3], "account_number": u[4], "balance": str(u[5])}
                 for u in users
             ]
         )
@@ -121,12 +121,12 @@ def get_user(user_id):
     cur = conn.cursor()
     try:
         # VULNERABILITY: SQL Injection (CWE-89)
-        query = f"SELECT id, username, email, balance FROM users WHERE id={user_id}"
+        query = f"SELECT id, username, email, balance, account_number FROM users WHERE id={user_id}"
         cur.execute(query)
         user = cur.fetchone()
         if user:
             return jsonify(
-                {"id": user[0], "username": user[1], "email": user[2], "balance": str(user[3])}
+                {"id": user[0], "username": user[1], "email": user[2], "balance": str(user[3]), "account_number": user[4]}
             )
         return jsonify({"error": "User not found"}), 404
     finally:
